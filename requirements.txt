@@ -1,0 +1,15 @@
+streamlit
+langchain
+langchain-text-splitters
+chromadb
+sentence-transformers
+rank-bm25
+pymupdf
+google-generativeai
+python-dotenv
+pandas
+ragas
+plotly
+numpy
+cross-encoder
+torch
