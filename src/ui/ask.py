@@ -37,9 +37,9 @@ def render_ask():
                 response = pipeline.ask(
                     question.strip()
                 )
-
-            answer = str(
-                response.answer
+                st.session_state["last_response"] = response
+                answer = str(
+                     response.answer
             )
 
             # Gemini quota protection

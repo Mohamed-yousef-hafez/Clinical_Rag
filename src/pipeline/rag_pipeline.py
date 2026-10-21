@@ -1,3 +1,4 @@
+
 import time
 
 from src.retrieval.retriever import Retriever
@@ -8,119 +9,94 @@ from src.models.response import RAGResponse
 
 
 class RAGPipeline:
-
     def __init__(self):
-
-        print(
-            "Initializing Clinical RAG Pipeline..."
-        )
+        print("Initializing Clinical RAG Pipeline...")
 
         self.retriever = Retriever()
-        print("Retriever Loaded")
-
         self.generator = Generator()
-        print("Generator Loaded")
-
         self.classifier = RiskClassifier()
-        print("RiskClassifier Loaded")
-
         self.refusal = SafeRefusal()
-        print("SafeRefusal Loaded")
 
         print("Clinical RAG Pipeline Ready")
 
     def ask(self, question):
-
         start_time = time.time()
+        question = (question or "").strip()
 
-        risk = self.classifier.classify(
-            question
-        )
+        if not question:
+            return RAGResponse(
+                question="",
+                answer="Please enter a question.",
+                risk="unsafe",
+                status="blocked",
+                latency=round(time.time() - start_time, 2),
+            )
+
+        risk = self.classifier.classify(question)
 
         if risk != "safe":
-
             return RAGResponse(
                 question=question,
                 answer=self.refusal.respond(risk),
                 risk=risk,
-                status="blocked"
+                status="blocked",
+                latency=round(time.time() - start_time, 2),
             )
 
-        retrieval = self.retriever.search(
-            question
-        )
+        retrieval = self.retriever.search(question)
 
-        if retrieval["status"] != "success":
-
+        if retrieval.get("status") != "success":
             return RAGResponse(
                 question=question,
-                answer=self.refusal.respond(
-                    "out_of_scope"
-                ),
+                answer=self.refusal.respond("out_of_scope"),
                 risk="out_of_scope",
-                status="out_of_scope"
+                status="out_of_scope",
+                confidence="Low",
+                latency=round(time.time() - start_time, 2),
             )
-
-        chunks = retrieval.get(
-            "chunks",
-            []
-        )
 
         chunks = self.retriever.rerank(
             question,
-            chunks
+            retrieval.get("chunks", []),
         )
 
         if not chunks:
-
             return RAGResponse(
                 question=question,
-                answer=self.refusal.respond(
-                    "out_of_scope"
-                ),
+                answer=self.refusal.respond("out_of_scope"),
                 risk="out_of_scope",
-                status="out_of_scope"
+                status="out_of_scope",
+                confidence="Low",
+                latency=round(time.time() - start_time, 2),
             )
 
-        answer = self.generator.generate(
-            question,
-            chunks
-        )
+        try:
+            answer = self.generator.generate(question, chunks)
 
-        citations = []
-        pages = []
-
-        for chunk in chunks:
-
-            page = chunk.get(
-                "page",
-                "Unknown"
+        except RuntimeError as exc:
+            return RAGResponse(
+                question=question,
+                answer=str(exc),
+                chunks=chunks,
+                citations=[],
+                retrieved_pages=[],
+                latency=round(time.time() - start_time, 2),
+                risk="safe",
+                status="generation_error",
+                confidence=retrieval.get("confidence", "Medium"),
+                evidence_count=len(chunks),
             )
 
-            citation = f"Page {page}"
-
-            if citation not in citations:
-                citations.append(citation)
-
-            if page not in pages:
-                pages.append(page)
-
-        latency = round(
-            time.time() - start_time,
-            2
-        )
-
-        return RAGResponse(
-            question=question,
-            answer=answer,
-            chunks=chunks,
-            citations=citations,
-            retrieved_pages=pages,
-            latency=latency,
-            risk="safe",
-            status="success",
-            confidence=retrieval.get(
-                "confidence",
-                "Medium"
+        if not isinstance(answer, str) or not answer.strip():
+            return RAGResponse(
+                question=question,
+                answer="Gemini returned an empty response.",
+                chunks=chunks,
+                citations=[],
+                retrieved_pages=[],
+                latency=round(time.time() - start_time, 2),
+                risk="safe",
+                status="generation_error",
+                confidence=retrieval.get("confidence", "Medium"),
+                evidence_count=len(chunks),
             )
-        )

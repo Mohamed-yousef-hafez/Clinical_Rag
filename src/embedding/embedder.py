@@ -1,125 +1,69 @@
-"""
-Embedding Generator
-
-- Semantic Retrieval
-- Vector Store
-- Embedding Generation
-"""
 
 import chromadb
-
 from sentence_transformers import SentenceTransformer
 
 from src.config.settings import settings
 
 
 class Embedder:
-
     def __init__(self):
-
-        print("Loading Embedding Model...")
-
-        self.model = SentenceTransformer(
-            settings.EMBEDDING_MODEL
-        )
-
-        print("Connecting to ChromaDB...")
+        self.model = SentenceTransformer(settings.EMBEDDING_MODEL)
 
         self.client = chromadb.PersistentClient(
             path=settings.CHROMA_PATH
         )
 
-        # -----------------------------------------
-        # Get existing collection
-        # -----------------------------------------
-
-        try:
-
-            self.collection = self.client.get_collection(
-                name=settings.COLLECTION_NAME
-            )
-
-            print(
-                f"✓ Existing collection loaded: "
-                f"{settings.COLLECTION_NAME}"
-            )
-
-        except Exception:
-
-            self.collection = self.client.create_collection(
-                name=settings.COLLECTION_NAME
-            )
-
-            print(
-                f"✓ New collection created: "
-                f"{settings.COLLECTION_NAME}"
-            )
-
-        print("Embedding Module Ready")
-
-    # =====================================================
-    # Store Embeddings
-    # =====================================================
+        self.collection = None
 
     def store(self, chunks):
-
         if not chunks:
+            raise ValueError("No chunks available to store.")
 
-            raise ValueError(
-                "No chunks available to store."
-            )
+        try:
+            self.client.delete_collection(settings.COLLECTION_NAME)
+        except Exception:
+            pass
 
-        texts = [
-            chunk["text"]
-            for chunk in chunks
-        ]
+        self.collection = self.client.create_collection(
+            name=settings.COLLECTION_NAME,
+            metadata={"hnsw:space": "cosine"},
+        )
 
-        embeddings = self.model.encode(
-            texts,
-            normalize_embeddings=True,
-            show_progress_bar=True
-        ).tolist()
+        batch_size = 16
 
-        ids = [
-            f"chunk_{i}"
-            for i in range(len(chunks))
-        ]
+        for start in range(0, len(chunks), batch_size):
+            batch = chunks[start:start + batch_size]
 
-        metadatas = []
+            texts = [chunk["text"] for chunk in batch]
 
-        for chunk in chunks:
+            embeddings = self.model.encode(
+                texts,
+                normalize_embeddings=True,
+                batch_size=batch_size,
+                show_progress_bar=False,
+            ).tolist()
 
-            metadatas.append(
+            ids = [
+                f"chunk_{start + i}"
+                for i in range(len(batch))
+            ]
+
+            metadatas = [
                 {
-                    "page": str(
-                        chunk.get(
-                            "page",
-                            "Unknown"
-                        )
+                    "page": str(chunk.get("page", "Unknown")),
+                    "document": str(
+                        chunk.get("document", "Hypertension Guideline")
                     ),
-                    "document": chunk.get(
-                        "document",
-                        "Clinical Guideline"
-                    ),
-                    "section": chunk.get(
-                        "section",
-                        "Unknown"
-                    )
+                    "section": str(chunk.get("section", "Unknown")),
                 }
+                for chunk in batch
+            ]
+
+            self.collection.add(
+                ids=ids,
+                documents=texts,
+                embeddings=embeddings,
+                metadatas=metadatas,
             )
 
-        self.collection.upsert(
-            ids=ids,
-            documents=texts,
-            embeddings=embeddings,
-            metadatas=metadatas
-        )
-
-        print(
-            f"✓ Stored {len(chunks)} chunks"
-        )
-
-        print(
-            f"✓ Collection: "
-            f"{settings.COLLECTION_NAME}"
-        )
+        print(f"Stored {len(chunks)} chunks in ChromaDB.")

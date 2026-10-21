@@ -1,58 +1,60 @@
 
-
 import streamlit as st
 
 
 def render_evidence():
+    st.title("Retrieved Evidence")
 
-    st.title(" Retrieved Evidence")
+    response = st.session_state.get("last_response")
 
-    if "last_response" not in st.session_state:
-
+    if response is None:
         st.info(
-            "No evidence available yet.\n\nGo to **Ask AI** and ask a question first."
+            "No evidence available yet.\n\n"
+            "Go to Ask AI and ask a question first."
         )
-
         return
 
-    response = st.session_state["last_response"]
-
     st.subheader("Question")
-
     st.write(response.question)
 
     st.subheader("Answer")
-
-    st.success(response.answer)
+    st.write(response.answer)
 
     st.subheader("Retrieved Pages")
+    pages = getattr(response, "retrieved_pages", []) or []
 
-    if response.retrieved_pages:
-
-        st.write(
-            ", ".join(
-                [str(page) for page in response.retrieved_pages]
-            )
-        )
+    if pages:
+        st.write(", ".join(str(page) for page in pages))
+    else:
+        st.caption("No page information available.")
 
     st.subheader("Citations")
+    citations = getattr(response, "citations", []) or []
 
-    if response.citations:
-
-        for citation in response.citations:
-
+    if citations:
+        for citation in citations:
             st.write(f"• {citation}")
+    else:
+        st.caption("No citations available.")
 
     st.subheader("Evidence Chunks")
+    chunks = getattr(response, "chunks", []) or []
 
-    for index, chunk in enumerate(response.chunks, start=1):
+    if not chunks:
+        st.info("No evidence chunks were retrieved.")
+        return
 
-        with st.expander(
-            f"Evidence {index} | Page {chunk['page']}"
-        ):
+    for index, chunk in enumerate(chunks, start=1):
+        page = chunk.get("page", "Unknown")
 
-            st.markdown(
-                f"**Similarity Distance:** {chunk['distance']}"
-            )
+        with st.expander(f"Evidence {index} | Page {page}"):
+            distance = chunk.get("distance")
+            rerank_score = chunk.get("rerank_score")
 
-            st.write(chunk["text"])
+            if distance is not None:
+                st.caption(f"Similarity Distance: {distance:.4f}")
+
+            if rerank_score is not None:
+                st.caption(f"Rerank Score: {rerank_score:.4f}")
+
+            st.write(chunk.get("text", "No text available."))
