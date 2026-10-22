@@ -33,9 +33,6 @@ data/chroma/
 # Local Data
 # =========================
 
-# PDF files / uploaded guidelines
-data/docs/*.pdf
-
 # =========================
 # Streamlit
 # =========================

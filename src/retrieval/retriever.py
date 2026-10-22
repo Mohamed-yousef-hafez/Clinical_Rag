@@ -1,4 +1,5 @@
 
+
 import chromadb
 from sentence_transformers import SentenceTransformer, CrossEncoder
 from rank_bm25 import BM25Okapi
@@ -8,14 +9,26 @@ from src.config.settings import settings
 
 class Retriever:
     def __init__(self):
-        self.encoder = SentenceTransformer(settings.EMBEDDING_MODEL)
-
         self.client = chromadb.PersistentClient(
             path=settings.CHROMA_PATH
         )
 
+        collections = [
+            collection.name
+            for collection in self.client.list_collections()
+        ]
+
+        if settings.COLLECTION_NAME not in collections:
+            from src.build_pipeline import main
+
+            main()
+
         self.collection = self.client.get_collection(
             name=settings.COLLECTION_NAME
+        )
+
+        self.encoder = SentenceTransformer(
+            settings.EMBEDDING_MODEL
         )
 
         data = self.collection.get(
