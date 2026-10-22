@@ -43,60 +43,77 @@ class RAGPipeline:
                 latency=round(time.time() - start_time, 2),
             )
 
-        retrieval = self.retriever.search(question)
-
-        if retrieval.get("status") != "success":
-            return RAGResponse(
-                question=question,
-                answer=self.refusal.respond("out_of_scope"),
-                risk="out_of_scope",
-                status="out_of_scope",
-                confidence="Low",
-                latency=round(time.time() - start_time, 2),
-            )
-
-        chunks = self.retriever.rerank(
-            question,
-            retrieval.get("chunks", []),
-        )
-
-        if not chunks:
-            return RAGResponse(
-                question=question,
-                answer=self.refusal.respond("out_of_scope"),
-                risk="out_of_scope",
-                status="out_of_scope",
-                confidence="Low",
-                latency=round(time.time() - start_time, 2),
-            )
-
         try:
+            retrieval = self.retriever.search(question)
+
+            if not retrieval or retrieval.get("status") != "success":
+                return RAGResponse(
+                    question=question,
+                    answer=self.refusal.respond("out_of_scope"),
+                    risk="out_of_scope",
+                    status="out_of_scope",
+                    confidence="Low",
+                    latency=round(time.time() - start_time, 2),
+                )
+
+            chunks = self.retriever.rerank(
+                question,
+                retrieval.get("chunks", []),
+            )
+
+            if not chunks:
+                return RAGResponse(
+                    question=question,
+                    answer=self.refusal.respond("out_of_scope"),
+                    risk="out_of_scope",
+                    status="out_of_scope",
+                    confidence="Low",
+                    latency=round(time.time() - start_time, 2),
+                )
+
             answer = self.generator.generate(question, chunks)
 
-        except RuntimeError as exc:
+            if not isinstance(answer, str) or not answer.strip():
+                raise ValueError("Generator returned an empty response.")
+
+            citations = []
+            retrieved_pages = []
+
+            for chunk in chunks:
+                page = chunk.get("page", "Unknown")
+
+                if page != "Unknown" and page not in retrieved_pages:
+                    retrieved_pages.append(page)
+
+                citations.append({
+                    "page": page,
+                    "document": chunk.get("document", "Hypertension Guideline"),
+                    "section": chunk.get("section", "Unknown"),
+                    "text": chunk.get("text", ""),
+                })
+
             return RAGResponse(
                 question=question,
-                answer=str(exc),
+                answer=answer,
                 chunks=chunks,
-                citations=[],
-                retrieved_pages=[],
+                citations=citations,
+                retrieved_pages=retrieved_pages,
                 latency=round(time.time() - start_time, 2),
                 risk="safe",
-                status="generation_error",
+                status="success",
                 confidence=retrieval.get("confidence", "Medium"),
+                retrieval_type="Hybrid",
                 evidence_count=len(chunks),
             )
 
-        if not isinstance(answer, str) or not answer.strip():
+        except Exception as exc:
+            print(f"RAG pipeline error: {type(exc).__name__}: {exc}")
+
             return RAGResponse(
                 question=question,
-                answer="Gemini returned an empty response.",
-                chunks=chunks,
-                citations=[],
-                retrieved_pages=[],
+                answer="An error occurred while processing your question. Please try again.",
                 latency=round(time.time() - start_time, 2),
                 risk="safe",
                 status="generation_error",
-                confidence=retrieval.get("confidence", "Medium"),
-                evidence_count=len(chunks),
+                confidence="Low",
             )
