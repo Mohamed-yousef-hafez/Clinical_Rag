@@ -1,8 +1,9 @@
 
 streamlit
 langchain-text-splitters
-chromadb
-sentence-transformers
+chromadb==1.5.9
+sentence-transformers==6.1.0
+transformers==5.20.1
 rank-bm25
 pymupdf
 google-generativeai
