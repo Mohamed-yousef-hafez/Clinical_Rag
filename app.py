@@ -3,11 +3,12 @@ import streamlit as st
 
 from src.ui.home import render_home
 from src.ui.ask import render_ask
-from src.ui.evidence import render_evidence
 from src.ui.safety import render_safety
 from src.ui.evaluation import render_evaluation
 from src.ui.demo import render_demo
-from src.ui.results import render_results
+from src.ui.roadmap import render_roadmap
+from src.ui.about import render_about
+
 
 st.set_page_config(
     page_title="Clinical Evidence Assistant",
@@ -16,28 +17,48 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.sidebar.title("Clinical Evidence Assistant")
+
+st.sidebar.title("🩺 Clinical Evidence Assistant")
 st.sidebar.markdown("---")
 
-pages = {
-    "Home": render_home,
-    "Ask AI": render_ask,
-    "Evidence": render_evidence,
-    "Safety": render_safety,
-    "Evaluation": render_evaluation,
-    "Live Demo": render_demo,
-    "Results": render_results,
-}
-
-page = st.sidebar.radio("Navigation", list(pages.keys()))
+page = st.sidebar.radio(
+    "Navigation",
+    [
+        "🏠 Home",
+        "💬 Ask AI",
+        "🛡 Safety",
+        "📊 Evaluation",
+        "🚀 Live Demo",
+        
+    ],
+)
 
 st.sidebar.markdown("---")
-st.sidebar.success("RAG + Hybrid Search + ChromaDB")
-st.sidebar.caption("Hypertension guideline only")
+st.sidebar.success("RAG + LLM + ChromaDB")
+st.sidebar.caption("Clinical Evidence Assistant")
+
 
 try:
-    pages[page]()
+    if page == "🏠 Home":
+        render_home()
 
-except Exception as exc:
-    st.error(f"An error occurred while loading {page}.")
-    st.exception(exc)
+    
+
+    elif page == "💬 Ask AI":
+        render_ask()
+
+    elif page == "🛡 Safety":
+        render_safety()
+
+    elif page == "📊 Evaluation":
+        render_evaluation()
+
+    elif page == "🚀 Live Demo":
+        render_demo()
+
+    
+except Exception:
+    import traceback
+
+    st.error("Application Error")
+    st.code(traceback.format_exc())
