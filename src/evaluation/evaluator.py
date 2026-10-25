@@ -2,8 +2,7 @@
 """
 Empirical Evaluation Engine
 
- Metrics
-
+Metrics:
 - Precision@K
 - Citation Accuracy
 - Unsupported Claim Rate
@@ -14,392 +13,165 @@ import re
 
 
 class Evaluator:
-
     def __init__(self, pipeline):
-
         self.pipeline = pipeline
 
-    # =====================================================
-    # Precision@K
-    # =====================================================
-
-    def precision_at_k(
-        self,
-        retrieved_pages,
-        expected_pages
-    ):
-
+    def precision_at_k(self, retrieved_pages, expected_pages):
         if not retrieved_pages:
-
             return 0.0
 
         if not expected_pages:
-
             return None
 
-        retrieved = set(
-            str(p)
-            for p in retrieved_pages
-        )
+        retrieved = {str(page) for page in retrieved_pages}
+        expected = {str(page) for page in expected_pages}
 
-        expected = set(
-            str(p)
-            for p in expected_pages
-        )
+        relevant = len(retrieved.intersection(expected))
 
-        relevant = len(
-            retrieved.intersection(
-                expected
-            )
-        )
+        return round(relevant / len(retrieved), 3)
 
-        return round(
-            relevant / len(retrieved),
-            3
-        )
-
-    # =====================================================
-    # Citation Accuracy
-    # =====================================================
-
-    def citation_accuracy(
-        self,
-        response
-    ):
-
+    def citation_accuracy(self, response):
         if response.status != "success":
-
             return 0.0
 
-        # ---------------------------------------------
-        # Pages actually retrieved
-        # ---------------------------------------------
-
-        retrieved_pages = set(
-            str(
-                chunk.get(
-                    "page",
-                    "Unknown"
-                )
-            )
+        retrieved_pages = {
+            str(chunk.get("page", "Unknown"))
             for chunk in response.chunks
-        )
-
-        # ---------------------------------------------
-        # Pages shown in UI
-        # ---------------------------------------------
+            if chunk.get("page", "Unknown") != "Unknown"
+        }
 
         ui_pages = set()
 
-        for citation in response.citations:
+        for citation in response.citations or []:
+            if isinstance(citation, dict):
+                page = citation.get("page")
 
-            match = re.search(
-                r"(\d+)",
-                citation
-            )
+                if page is not None and str(page) != "Unknown":
+                    ui_pages.add(str(page))
 
-            if match:
+            elif isinstance(citation, str):
+                match = re.search(r"\d+", citation)
 
-                ui_pages.add(
-                    match.group(1)
-                )
-
-        # ---------------------------------------------
-        # Pages written by Gemini
-        # ---------------------------------------------
+                if match:
+                    ui_pages.add(match.group(0))
 
         answer_pages = set()
 
         patterns = [
-
             r"\[Page\s*(\d+)\]",
-
             r"\(Page\s*(\d+)\)",
-
-            r"Page\s*(\d+)",
-
-            r"page\s*(\d+)"
-
+            r"\bPage\s*(\d+)\b",
+            r"\bpage\s*(\d+)\b",
         ]
 
         for pattern in patterns:
-
-            matches = re.findall(
-                pattern,
-                response.answer,
-                re.IGNORECASE
-            )
-
             answer_pages.update(
-                matches
+                re.findall(pattern, response.answer, re.IGNORECASE)
             )
 
-        # ---------------------------------------------
-        # Choose cited pages
-        # ---------------------------------------------
-
-        cited_pages = (
-            answer_pages
-            or ui_pages
-        )
+        cited_pages = answer_pages or ui_pages
 
         if not cited_pages:
-
             return 0.0
 
-        correct = len(
-            cited_pages.intersection(
-                retrieved_pages
-            )
-        )
+        correct = len(cited_pages.intersection(retrieved_pages))
 
-        return round(
-            correct / len(cited_pages),
-            3
-        )
+        return round(correct / len(cited_pages), 3)
 
-    # =====================================================
-    # Unsupported Claim Rate
-    # =====================================================
-
-    def unsupported_claim_rate(
-        self,
-        response
-    ):
-
+    def unsupported_claim_rate(self, response):
         if response.status != "success":
-
             return 0.0
 
-        refusal = (
-            "couldn't find sufficient evidence"
-        )
+        refusal_phrases = [
+            "couldn't find sufficient evidence",
+            "cannot answer reliably",
+            "unable to answer from the available evidence",
+        ]
 
-        if (
-            refusal.lower()
-            in response.answer.lower()
+        if any(
+            phrase in response.answer.lower()
+            for phrase in refusal_phrases
         ):
-
             return 0.0
 
-        citation_score = (
-            self.citation_accuracy(
-                response
-            )
-        )
+        citation_score = self.citation_accuracy(response)
 
         if citation_score > 0:
-
-            return round(
-                1 - citation_score,
-                3
-            )
+            return round(1 - citation_score, 3)
 
         return 1.0
 
-    # =====================================================
-    # Evaluate One Case
-    # =====================================================
-
-    def evaluate_case(
-        self,
-        case
-    ):
-
+    def evaluate_case(self, case):
         try:
+            start_pages = []
+            response = self.pipeline.ask(case["question"])
 
-            response = self.pipeline.ask(
-                case["question"]
+            retrieved_pages = getattr(
+                response,
+                "retrieved_pages",
+                [],
+            ) or []
+
+            chunks = getattr(response, "chunks", []) or []
+
+            precision = self.precision_at_k(
+                retrieved_pages,
+                case.get("expected_pages", []),
             )
 
-            precision = (
-                self.precision_at_k(
-                    response.retrieved_pages,
-                    case.get(
-                        "expected_pages",
-                        []
-                    )
-                )
-            )
-
-            citation = (
-                self.citation_accuracy(
-                    response
-                )
-            )
-
-            unsupported = (
-                self.unsupported_claim_rate(
-                    response
-                )
-            )
+            citation = self.citation_accuracy(response)
+            unsupported = self.unsupported_claim_rate(response)
 
             return {
-
-                "id":
-                    case["id"],
-
-                "question":
-                    case["question"],
-
-                "status":
-                    response.status,
-
-                "risk":
-                    response.risk,
-
-                "confidence":
-                    getattr(
-                        response,
-                        "confidence",
-                        "Low"
-                    ),
-
-                "latency":
-                    response.latency,
-
-                "retrieved_chunks":
-                    len(response.chunks),
-
-                "retrieved_pages":
-                    response.retrieved_pages,
-
-                "precision_at_k":
-                    precision,
-
-                "citation_accuracy":
-                    citation,
-
-                "unsupported_claim_rate":
-                    unsupported
-
+                "id": case["id"],
+                "question": case["question"],
+                "status": response.status,
+                "risk": response.risk,
+                "confidence": getattr(response, "confidence", "Low"),
+                "latency": response.latency,
+                "retrieved_chunks": len(chunks),
+                "retrieved_pages": retrieved_pages,
+                "precision_at_k": precision,
+                "citation_accuracy": citation,
+                "unsupported_claim_rate": unsupported,
+                "error": "",
             }
 
-        except Exception as e:
-
-            error_message = str(e)
-
-            # ---------------------------------------------
-            # Gemini Quota
-            # ---------------------------------------------
+        except Exception as exc:
+            error_message = str(exc)
 
             if (
                 "429" in error_message
-                or "quota"
-                in error_message.lower()
+                or "quota" in error_message.lower()
             ):
-
-                return {
-
-                    "id":
-                        case["id"],
-
-                    "question":
-                        case["question"],
-
-                    "status":
-                        "quota_exceeded",
-
-                    "risk":
-                        "unknown",
-
-                    "confidence":
-                        "Unknown",
-
-                    "latency":
-                        0.0,
-
-                    "retrieved_chunks":
-                        0,
-
-                    "retrieved_pages":
-                        [],
-
-                    "precision_at_k":
-                        None,
-
-                    "citation_accuracy":
-                        None,
-
-                    "unsupported_claim_rate":
-                        None,
-
-                    "error":
-                        "Gemini API quota exceeded."
-
-                }
-
-            # ---------------------------------------------
-            # Other Errors
-            # ---------------------------------------------
+                status = "quota_exceeded"
+                error_message = "Gemini API quota exceeded."
+            else:
+                status = "error"
 
             return {
-
-                "id":
-                    case["id"],
-
-                "question":
-                    case["question"],
-
-                "status":
-                    "error",
-
-                "risk":
-                    "unknown",
-
-                "confidence":
-                    "Unknown",
-
-                "latency":
-                    0.0,
-
-                "retrieved_chunks":
-                    0,
-
-                "retrieved_pages":
-                    [],
-
-                "precision_at_k":
-                    None,
-
-                "citation_accuracy":
-                    None,
-
-                "unsupported_claim_rate":
-                    None,
-
-                "error":
-                    error_message
-
+                "id": case["id"],
+                "question": case["question"],
+                "status": status,
+                "risk": "unknown",
+                "confidence": "Unknown",
+                "latency": 0.0,
+                "retrieved_chunks": 0,
+                "retrieved_pages": [],
+                "precision_at_k": None,
+                "citation_accuracy": None,
+                "unsupported_claim_rate": None,
+                "error": error_message,
             }
 
-    # =====================================================
-    # Run All Benchmark Cases
-    # =====================================================
-
-    def run(
-        self,
-        test_cases
-    ):
-
+    def run(self, test_cases):
         results = []
 
         for case in test_cases:
+            result = self.evaluate_case(case)
+            results.append(result)
 
-            result = self.evaluate_case(
-                case
-            )
-
-            results.append(
-                result
-            )
-
-            if (
-                result["status"]
-                == "quota_exceeded"
-            ):
-
+            if result["status"] == "quota_exceeded":
                 break
 
         return results
-
