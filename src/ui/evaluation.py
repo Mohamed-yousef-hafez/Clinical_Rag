@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 
@@ -10,17 +9,17 @@ TEST_CASES = [
     {
         "id": "HTN-1",
         "question": "What is hypertension?",
-        "expected_pages": [],
+        "expected_pages": [9, 13],
     },
     {
         "id": "HTN-2",
         "question": "When should antihypertensive drug therapy be started?",
-        "expected_pages": [],
+        "expected_pages": [9, 10],
     },
     {
         "id": "HTN-3",
         "question": "How is hypertension defined in the guideline?",
-        "expected_pages": [],
+        "expected_pages": [9, 13],
     },
     {
         "id": "SAFE",
@@ -63,16 +62,24 @@ def render_evaluation():
             return
 
         df = pd.DataFrame(results)
-
         st.subheader("Evaluation Results")
         st.dataframe(df, width="stretch", hide_index=True)
+
+        if "status" not in df.columns:
+            st.error("Evaluation results are missing the status field.")
+            return
 
         failed = df[df["status"].isin(["error", "quota_exceeded"])]
 
         if not failed.empty:
             st.subheader("Errors")
+            error_columns = [
+                column
+                for column in ["id", "question", "status", "error"]
+                if column in failed.columns
+            ]
             st.dataframe(
-                failed[["id", "question", "status", "error"]],
+                failed[error_columns],
                 width="stretch",
                 hide_index=True,
             )
@@ -82,29 +89,40 @@ def render_evaluation():
 
         if successful.empty:
             st.warning("No successful evaluation cases were returned.")
-
             if not blocked.empty:
                 st.metric("Blocked Requests", len(blocked))
-
             return
+
+        precision_values = (
+            successful["precision_at_k"].dropna()
+            if "precision_at_k" in successful.columns
+            else pd.Series(dtype=float)
+        )
+        citation_values = (
+            successful["citation_accuracy"].dropna()
+            if "citation_accuracy" in successful.columns
+            else pd.Series(dtype=float)
+        )
+        unsupported_values = (
+            successful["unsupported_claim_rate"].dropna()
+            if "unsupported_claim_rate" in successful.columns
+            else pd.Series(dtype=float)
+        )
 
         col1, col2, col3 = st.columns(3)
 
         col1.metric(
             "Average Latency",
-            f"{successful['latency'].mean():.2f} sec",
+            f"{successful['latency'].mean():.2f} sec"
+            if "latency" in successful.columns
+            else "N/A",
         )
-
-        precision_values = successful["precision_at_k"].dropna()
-        citation_values = successful["citation_accuracy"].dropna()
-
         col2.metric(
             "Precision@K",
             f"{precision_values.mean():.3f}"
             if not precision_values.empty
             else "N/A",
         )
-
         col3.metric(
             "Citation Accuracy",
             f"{citation_values.mean():.3f}"
@@ -113,39 +131,55 @@ def render_evaluation():
         )
 
         col4, col5 = st.columns(2)
-
-        unsupported_values = successful[
-            "unsupported_claim_rate"
-        ].dropna()
-
         col4.metric(
             "Unsupported Claim Rate",
             f"{unsupported_values.mean():.3f}"
             if not unsupported_values.empty
             else "N/A",
         )
-
         col5.metric("Blocked Requests", len(blocked))
 
-        st.subheader("Latency")
-        st.bar_chart(successful.set_index("id")["latency"])
+        if precision_values.empty:
+            st.info(
+                "Precision@K is unavailable because no successful "
+                "evaluation case has valid expected-page references. "
+                "Check the page numbering used in the indexed PDF."
+            )
+        else:
+            st.caption(
+                "Precision@K is calculated only for successful cases "
+                "with expected-page references."
+            )
+
+        if "latency" in successful.columns:
+            st.subheader("Latency")
+            st.bar_chart(successful.set_index("id")["latency"])
 
         if not precision_values.empty:
+            precision_df = successful[
+                successful["precision_at_k"].notna()
+            ]
             st.subheader("Precision@K")
             st.bar_chart(
-                successful.set_index("id")["precision_at_k"]
+                precision_df.set_index("id")["precision_at_k"]
             )
 
         if not citation_values.empty:
+            citation_df = successful[
+                successful["citation_accuracy"].notna()
+            ]
             st.subheader("Citation Accuracy")
             st.bar_chart(
-                successful.set_index("id")["citation_accuracy"]
+                citation_df.set_index("id")["citation_accuracy"]
             )
 
         if not unsupported_values.empty:
+            unsupported_df = successful[
+                successful["unsupported_claim_rate"].notna()
+            ]
             st.subheader("Unsupported Claim Rate")
             st.bar_chart(
-                successful.set_index("id")["unsupported_claim_rate"]
+                unsupported_df.set_index("id")["unsupported_claim_rate"]
             )
 
         st.success("Evaluation Completed Successfully")
