@@ -16,19 +16,25 @@ class Evaluator:
     def __init__(self, pipeline):
         self.pipeline = pipeline
 
-    def precision_at_k(self, retrieved_pages, expected_pages):
-        if not retrieved_pages:
-            return 0.0
+    def precision_at_k(self, retrieved_pages, expected_pages, k=None):
+        if not expected_pages or not retrieved_pages:
+            return None if not expected_pages else 0.0
 
-        if not expected_pages:
-            return None
-
-        retrieved = {str(page) for page in retrieved_pages}
+        retrieved = [str(page) for page in retrieved_pages]
         expected = {str(page) for page in expected_pages}
 
-        relevant = len(retrieved.intersection(expected))
+        if k is None:
+            k = len(retrieved)
 
-        return round(relevant / len(retrieved), 3)
+        if k <= 0:
+            return 0.0
+
+        top_k = retrieved[:k]
+        relevant = sum(
+            1 for page in top_k if page in expected
+        )
+
+        return round(relevant / k, 3)
 
     def citation_accuracy(self, response):
         if response.status != "success":
@@ -36,51 +42,40 @@ class Evaluator:
 
         retrieved_pages = {
             str(chunk.get("page", "Unknown"))
-            for chunk in response.chunks
+            for chunk in (response.chunks or [])
             if chunk.get("page", "Unknown") != "Unknown"
         }
 
-        ui_pages = set()
-
-        for citation in response.citations or []:
-            if isinstance(citation, dict):
-                page = citation.get("page")
-
-                if page is not None and str(page) != "Unknown":
-                    ui_pages.add(str(page))
-
-            elif isinstance(citation, str):
-                match = re.search(r"\d+", citation)
-
-                if match:
-                    ui_pages.add(match.group(0))
-
-        answer_pages = set()
-
-        patterns = [
-            r"\[Page\s*(\d+)\]",
-            r"\(Page\s*(\d+)\)",
-            r"\bPage\s*(\d+)\b",
-            r"\bpage\s*(\d+)\b",
-        ]
-
-        for pattern in patterns:
-            answer_pages.update(
-                re.findall(pattern, response.answer, re.IGNORECASE)
+        answer_pages = set(
+            re.findall(
+                r"\[Page\s+(\d+)\]",
+                response.answer or "",
+                re.IGNORECASE,
             )
+        )
 
-        cited_pages = answer_pages or ui_pages
+        if not answer_pages:
+            for citation in response.citations or []:
+                if isinstance(citation, dict):
+                    page = citation.get("page")
+                    if page is not None and str(page) != "Unknown":
+                        answer_pages.add(str(page))
+                elif isinstance(citation, str):
+                    match = re.search(r"\bPage\s+(\d+)\b", citation, re.IGNORECASE)
+                    if match:
+                        answer_pages.add(match.group(1))
 
-        if not cited_pages:
+        if not answer_pages:
             return 0.0
 
-        correct = len(cited_pages.intersection(retrieved_pages))
-
-        return round(correct / len(cited_pages), 3)
+        correct = len(answer_pages.intersection(retrieved_pages))
+        return round(correct / len(answer_pages), 3)
 
     def unsupported_claim_rate(self, response):
         if response.status != "success":
             return 0.0
+
+        answer = (response.answer or "").lower()
 
         refusal_phrases = [
             "couldn't find sufficient evidence",
@@ -88,35 +83,39 @@ class Evaluator:
             "unable to answer from the available evidence",
         ]
 
-        if any(
-            phrase in response.answer.lower()
-            for phrase in refusal_phrases
-        ):
+        if any(phrase in answer for phrase in refusal_phrases):
             return 0.0
 
-        citation_score = self.citation_accuracy(response)
-
-        if citation_score > 0:
-            return round(1 - citation_score, 3)
-
-        return 1.0
+        return round(1.0 - self.citation_accuracy(response), 3)
 
     def evaluate_case(self, case):
         try:
-            start_pages = []
             response = self.pipeline.ask(case["question"])
 
             retrieved_pages = getattr(
-                response,
-                "retrieved_pages",
-                [],
+                response, "retrieved_pages", []
             ) or []
 
             chunks = getattr(response, "chunks", []) or []
 
+            # Use retrieved chunks when available, preserving their ranking.
+            ranked_pages = [
+                str(chunk.get("page"))
+                for chunk in chunks
+                if chunk.get("page") is not None
+                and str(chunk.get("page")) != "Unknown"
+            ]
+
+            if not ranked_pages:
+                ranked_pages = [str(page) for page in retrieved_pages]
+
+            expected_pages = case.get("expected_pages", [])
+            k = case.get("k", len(ranked_pages))
+
             precision = self.precision_at_k(
-                retrieved_pages,
-                case.get("expected_pages", []),
+                ranked_pages,
+                expected_pages,
+                k=k,
             )
 
             citation = self.citation_accuracy(response)
@@ -140,10 +139,7 @@ class Evaluator:
         except Exception as exc:
             error_message = str(exc)
 
-            if (
-                "429" in error_message
-                or "quota" in error_message.lower()
-            ):
+            if "429" in error_message or "quota" in error_message.lower():
                 status = "quota_exceeded"
                 error_message = "Gemini API quota exceeded."
             else:

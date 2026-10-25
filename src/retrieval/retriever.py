@@ -1,8 +1,9 @@
-
+```python
+import re
 
 import chromadb
-from sentence_transformers import SentenceTransformer, CrossEncoder
 from rank_bm25 import BM25Okapi
+from sentence_transformers import SentenceTransformer, CrossEncoder
 
 from src.config.settings import settings
 
@@ -13,10 +14,10 @@ class Retriever:
             path=settings.CHROMA_PATH
         )
 
-        collections = [
+        collections = {
             collection.name
             for collection in self.client.list_collections()
-        ]
+        }
 
         if settings.COLLECTION_NAME not in collections:
             from src.build_pipeline import main
@@ -38,22 +39,31 @@ class Retriever:
         self.documents = data.get("documents") or []
         self.metadatas = data.get("metadatas") or []
 
+        self.bm25 = None
+
         if self.documents:
-            tokenized = [
-                document.lower().split()
+            tokenized_documents = [
+                self._tokenize(document)
                 for document in self.documents
             ]
-            self.bm25 = BM25Okapi(tokenized)
-        else:
-            self.bm25 = None
+
+            self.bm25 = BM25Okapi(tokenized_documents)
 
         self.reranker = None
+
+    @staticmethod
+    def _tokenize(text):
+        return re.findall(
+            r"\b[a-zA-Z0-9]+\b",
+            (text or "").lower(),
+        )
 
     def _load_reranker(self):
         if self.reranker is None:
             self.reranker = CrossEncoder(
                 settings.RERANKER_MODEL
             )
+
         return self.reranker
 
     def semantic_search(self, question, top_k=None):
@@ -70,7 +80,11 @@ class Retriever:
         result = self.collection.query(
             query_embeddings=[embedding.tolist()],
             n_results=min(top_k, len(self.documents)),
-            include=["documents", "metadatas", "distances"],
+            include=[
+                "documents",
+                "metadatas",
+                "distances",
+            ],
         )
 
         chunks = []
@@ -79,7 +93,9 @@ class Retriever:
         distances = result.get("distances") or [[]]
 
         for text, metadata, distance in zip(
-            documents[0], metadatas[0], distances[0]
+            documents[0],
+            metadatas[0],
+            distances[0],
         ):
             metadata = metadata or {}
 
@@ -88,7 +104,8 @@ class Retriever:
                 "page": metadata.get("page", "Unknown"),
                 "section": metadata.get("section", "Unknown"),
                 "document": metadata.get(
-                    "document", "Hypertension Guideline"
+                    "document",
+                    "Hypertension Guideline",
                 ),
                 "distance": float(distance),
             })
@@ -101,19 +118,27 @@ class Retriever:
         if self.bm25 is None:
             return []
 
-        scores = self.bm25.get_scores(
-            question.lower().split()
-        )
+        tokens = self._tokenize(question)
+
+        if not tokens:
+            return []
+
+        scores = self.bm25.get_scores(tokens)
 
         indices = sorted(
             range(len(scores)),
-            key=lambda i: scores[i],
+            key=lambda index: scores[index],
             reverse=True,
         )[:top_k]
 
         results = []
 
         for index in indices:
+            score = float(scores[index])
+
+            if score <= 0:
+                continue
+
             metadata = self.metadatas[index] or {}
 
             results.append({
@@ -121,9 +146,10 @@ class Retriever:
                 "page": metadata.get("page", "Unknown"),
                 "section": metadata.get("section", "Unknown"),
                 "document": metadata.get(
-                    "document", "Hypertension Guideline"
+                    "document",
+                    "Hypertension Guideline",
                 ),
-                "bm25_score": float(scores[index]),
+                "bm25_score": score,
             })
 
         return results
@@ -139,54 +165,37 @@ class Retriever:
                 "confidence": "Low",
             }
 
-        semantic_by_text = {
-            chunk["text"]: chunk
-            for chunk in semantic_results
-        }
-
-        max_bm25 = max(
-            (chunk.get("bm25_score", 0.0) for chunk in bm25_results),
-            default=0.0,
-        )
-
         combined = {}
 
-        for chunk in semantic_results + bm25_results:
-            text = chunk["text"]
+        def add_ranked_results(results, source):
+            for rank, chunk in enumerate(results, start=1):
+                text = chunk["text"]
 
-            if text not in combined:
-                combined[text] = dict(chunk)
+                if text not in combined:
+                    combined[text] = dict(chunk)
+                    combined[text]["rrf_score"] = 0.0
 
-            current = combined[text]
+                current = combined[text]
+                current["rrf_score"] += 1.0 / (60 + rank)
 
-            if "distance" in chunk:
-                current["distance"] = chunk["distance"]
+                if source == "semantic":
+                    current["distance"] = chunk.get("distance")
 
-            if "bm25_score" in chunk:
-                current["bm25_score"] = chunk["bm25_score"]
+                if source == "bm25":
+                    current["bm25_score"] = chunk.get(
+                        "bm25_score", 0.0
+                    )
 
-        for text, chunk in combined.items():
-            distance = chunk.get("distance")
+                for key in ("page", "section", "document"):
+                    if current.get(key) in (None, "Unknown", ""):
+                        current[key] = chunk.get(key, current.get(key))
 
-            semantic_score = (
-                max(0.0, min(1.0, 1.0 - distance))
-                if distance is not None
-                else 0.0
-            )
-
-            bm25_score = chunk.get("bm25_score", 0.0)
-            normalized_bm25 = (
-                bm25_score / max_bm25 if max_bm25 > 0 else 0.0
-            )
-
-            chunk["hybrid_score"] = (
-                0.6 * semantic_score
-                + 0.4 * normalized_bm25
-            )
+        add_ranked_results(semantic_results, "semantic")
+        add_ranked_results(bm25_results, "bm25")
 
         candidates = sorted(
             combined.values(),
-            key=lambda chunk: chunk["hybrid_score"],
+            key=lambda chunk: chunk["rrf_score"],
             reverse=True,
         )[:settings.TOP_K]
 
@@ -199,24 +208,46 @@ class Retriever:
         best_distance = min(semantic_distances, default=None)
 
         high_threshold = getattr(
-            settings, "HIGH_CONFIDENCE_DISTANCE", 0.30
-        )
-        distance_threshold = getattr(
-            settings, "DISTANCE_THRESHOLD", 0.70
+            settings,
+            "HIGH_CONFIDENCE_DISTANCE",
+            0.30,
         )
 
-        if best_distance is None or best_distance > distance_threshold:
+        distance_threshold = getattr(
+            settings,
+            "DISTANCE_THRESHOLD",
+            0.70,
+        )
+
+        has_keyword_match = any(
+            chunk.get("bm25_score", 0.0) > 0
+            for chunk in candidates
+        )
+
+        if (
+            best_distance is not None
+            and best_distance > distance_threshold
+            and not has_keyword_match
+        ):
             return {
                 "status": "out_of_scope",
                 "chunks": [],
                 "confidence": "Low",
             }
 
-        confidence = (
-            "High"
-            if best_distance <= high_threshold
-            else "Medium"
-        )
+        if best_distance is None and not has_keyword_match:
+            return {
+                "status": "out_of_scope",
+                "chunks": [],
+                "confidence": "Low",
+            }
+
+        if best_distance is None:
+            confidence = "Medium"
+        elif best_distance <= high_threshold:
+            confidence = "High"
+        else:
+            confidence = "Medium"
 
         return {
             "status": "success",
@@ -235,14 +266,22 @@ class Retriever:
             for chunk in chunks
         ]
 
-        scores = model.predict(pairs, batch_size=2)
+        scores = model.predict(
+            pairs,
+            batch_size=2,
+        )
+
+        reranked = []
 
         for chunk, score in zip(chunks, scores):
-            chunk["rerank_score"] = float(score)
+            item = dict(chunk)
+            item["rerank_score"] = float(score)
+            reranked.append(item)
 
-        chunks.sort(
+        reranked.sort(
             key=lambda chunk: chunk["rerank_score"],
             reverse=True,
         )
 
-        return chunks[:settings.RERANK_TOP_K]
+        return reranked[:settings.RERANK_TOP_K]
+```
