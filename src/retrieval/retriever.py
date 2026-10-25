@@ -1,4 +1,4 @@
-```python
+
 import re
 
 import chromadb
@@ -284,4 +284,3 @@ class Retriever:
         )
 
         return reranked[:settings.RERANK_TOP_K]
-```
