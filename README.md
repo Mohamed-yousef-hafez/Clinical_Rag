@@ -7,7 +7,11 @@ A Streamlit RAG application that answers hypertension questions using the includ
 - Python 3.12
 - A Gemini API key for answer generation
 - Internet access on first launch to download the embedding and reranker models
-https://github.com/user-attachments/assets/b4e566c2-9d3d-4e94-90bf-951e73d1813e
+## Demo Video
+
+Watch the Financial Compliance Agent interface demo:
+
+[▶ Watch the Demo Video](https://github.com/user-attachments/assets/b4e566c2-9d3d-4e94-90bf-951e73d1813e)
 ## Run locally (Windows PowerShell)
 
 From the project root:
