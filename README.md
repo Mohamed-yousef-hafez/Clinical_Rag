@@ -29,6 +29,16 @@ A Retrieval-Augmented Generation (RAG) assistant that answers domain-specific qu
 - Safety guardrails
 - Evaluation dashboard
 - Live demo scenarios
+=======
+- Python 3.12
+- A Gemini API key for answer generation
+- Internet access on first launch to download the embedding and reranker models
+## Demo Video
+
+Watch the Financial Compliance Agent interface demo:
+
+[▶ Watch the Demo Video](https://github.com/user-attachments/assets/b4e566c2-9d3d-4e94-90bf-951e73d1813e)
+## Run locally (Windows PowerShell)
 
 ---------------------------------
 SYSTEM_DESCRIPTION = """
