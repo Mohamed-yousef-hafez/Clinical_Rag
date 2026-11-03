@@ -23,7 +23,7 @@ class MultiStepRetriever:
         )
 
         self.model = genai.GenerativeModel(
-            model_name=settings.GEMINI_MODEL
+            model_name="gemini-2.5-flash"
         )
 
     def decompose(self, question):

@@ -30,11 +30,17 @@ class Evaluator:
             return 0.0
 
         top_k = retrieved[:k]
+
+        if not top_k:
+            return 0.0
+
         relevant = sum(
             1 for page in top_k if page in expected
         )
 
-        return round(relevant / k, 3)
+        # Divide by the number of items actually retrieved.
+        # Do not penalize missing result slots when fewer than K items exist.
+        return round(relevant / len(top_k), 3)
 
     def citation_accuracy(self, response):
         if response.status != "success":

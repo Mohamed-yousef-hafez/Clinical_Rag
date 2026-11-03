@@ -38,15 +38,9 @@ def render_ask():
                     question.strip()
                 )
                 st.session_state["last_response"] = response
-                answer = str(response.answer)
-
-            if response.status == "generation_error":
-                st.error("The answer could not be generated.")
-                if getattr(response, "error_detail", ""):
-                    with st.expander("Technical details for troubleshooting"):
-                        st.code(response.error_detail)
-                st.caption(f"Request time: {response.latency:.2f} sec")
-                return
+                answer = str(
+                     response.answer
+            )
 
             # Gemini quota protection
             if (

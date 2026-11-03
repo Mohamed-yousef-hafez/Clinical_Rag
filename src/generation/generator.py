@@ -16,7 +16,7 @@ class Generator:
         genai.configure(api_key=api_key)
 
         self.model = genai.GenerativeModel(
-            model_name=settings.GEMINI_MODEL
+            model_name="gemini-3.6-flash"
         )
 
     def build_prompt(self, question, chunks):
