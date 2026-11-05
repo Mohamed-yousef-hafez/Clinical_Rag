@@ -8,10 +8,10 @@ __pycache__/
 
 # Virtual Environment
 .venv/
-venv/
+venv_new/
 env/
 ENV/
-
+test_env/
 # =========================
 # Environment / Secrets
 # =========================
